@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>stem</title>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --text: #ddd;
+  --text-dim: #aaa;
+  --text-muted: #777;
+  --border: #333;
+  --border-hover: #666;
+  --field-ring: #181818;
+  --field-axis: #151515;
+  --field-label: #555;
+  --btn-text: #aaa;
+  --btn-hover: #ddd;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* drop zone */
+#drop-zone {
+  width: 460px;
+  height: 180px;
+  border: 1.5px dashed var(--border);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+#drop-zone:hover, #drop-zone.drag-over {
+  border-color: var(--border-hover);
+  background: #0e0e0e;
+}
+#drop-zone h2 {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text);
+  letter-spacing: 1px;
+}
+#drop-zone p {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+#drop-zone input { display: none; }
+
+#status {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  min-height: 18px;
+  letter-spacing: 0.5px;
+}
+
+/* mixer layout */
+#mixer {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+#track-name {
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+/* spatial field */
+#field {
+  position: relative;
+  width: 400px;
+  height: 400px;
+}
+
+#field-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--field-ring);
+  background: radial-gradient(circle, #0d0d0d 0%, #080808 100%);
+}
+
+.ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--field-ring);
+}
+.ring.r1 { width: 75%; height: 75%; top: 12.5%; left: 12.5%; }
+.ring.r2 { width: 50%; height: 50%; top: 25%; left: 25%; }
+.ring.r3 { width: 25%; height: 25%; top: 37.5%; left: 37.5%; }
+
+.axis {
+  position: absolute;
+  background: var(--field-axis);
+}
+.axis.h { width: 100%; height: 1px; top: 50%; left: 0; }
+.axis.v { height: 100%; width: 1px; left: 50%; top: 0; }
+
+.dir-label {
+  position: absolute;
+  font-size: 9px;
+  color: var(--field-label);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.dir-label.front { top: 6px; left: 50%; transform: translateX(-50%); }
+.dir-label.back  { bottom: 6px; left: 50%; transform: translateX(-50%); }
+.dir-label.left  { left: 6px; top: 50%; transform: translateY(-50%); }
+.dir-label.right { right: 6px; top: 50%; transform: translateY(-50%); }
+
+#head {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+#head svg { display: block; }
+
+/* stem dots */
+.stem-dot {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  z-index: 10;
+  transform: translate(-50%, -50%);
+  transition: box-shadow 0.15s, transform 0.08s, opacity 0.2s;
+  border: 2px solid rgba(255,255,255,0.08);
+}
+.stem-dot:active { cursor: grabbing; }
+.stem-dot .label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  pointer-events: none;
+  color: rgba(255,255,255,0.9);
+}
+.stem-dot .elev {
+  font-size: 7px;
+  color: rgba(255,255,255,0.45);
+  pointer-events: none;
+  margin-top: 1px;
+}
+.stem-dot.muted {
+  opacity: 0.2;
+  border-color: transparent;
+}
+
+.stem-dot[data-stem="vocals"] { background: rgba(200, 60, 60, 0.85); }
+.stem-dot[data-stem="drums"]  { background: rgba(55, 120, 190, 0.85); }
+.stem-dot[data-stem="bass"]   { background: rgba(75, 155, 55, 0.85); }
+.stem-dot[data-stem="other"]  { background: rgba(160, 125, 50, 0.85); }
+
+/* hover action buttons */
+.stem-actions {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.stem-dot:hover .stem-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.stem-actions button {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  color: #888;
+  font-size: 9px;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.stem-actions button:hover {
+  border-color: #888;
+  color: #fff;
+  background: #2a2a2a;
+}
+.stem-actions button.active {
+  background: #e0e0e0;
+  color: #0a0a0a;
+  border-color: #e0e0e0;
+}
+
+/* connecting lines */
+.stem-line {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform-origin: 0 0;
+  height: 1px;
+  z-index: 1;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.stem-line.muted { opacity: 0.05; }
+.stem-line[data-stem="vocals"] { background: rgba(200, 60, 60, 0.15); }
+.stem-line[data-stem="drums"]  { background: rgba(55, 120, 190, 0.15); }
+.stem-line[data-stem="bass"]   { background: rgba(75, 155, 55, 0.15); }
+.stem-line[data-stem="other"]  { background: rgba(160, 125, 50, 0.15); }
+
+/* presets */
+#presets {
+  display: flex;
+  gap: 8px;
+}
+#presets button {
+  background: none;
+  border: 1px solid var(--field-ring);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.15s;
+}
+#presets button:hover {
+  border-color: var(--border-hover);
+  color: var(--btn-hover);
+}
+
+/* transport */
+#transport {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+#play-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, color 0.2s;
+}
+#play-btn:hover { border-color: var(--border-hover); color: #fff; }
+
+#seek {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 260px;
+  height: 3px;
+  background: #1a1a1a;
+  border-radius: 2px;
+  cursor: pointer;
+  outline: none;
+}
+#seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  background: #999;
+  border-radius: 50%;
+  cursor: pointer;
+}
+#seek::-moz-range-thumb {
+  width: 12px; height: 12px;
+  background: #999;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+}
+
+#time {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+}
+
+#new-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--btn-text);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+}
+#new-btn:hover { border-color: var(--border-hover); color: var(--btn-hover); }
+
+#disclaimer {
+  position: fixed;
+  bottom: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+#disclaimer a { color: var(--text-dim); }
+
+#bottom-btns {
+  display: flex;
+  gap: 10px;
+}
+
+#export-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--btn-text);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+}
+#export-btn:hover { border-color: var(--border-hover); color: var(--btn-hover); }
+#export-btn:disabled { opacity: 0.3; cursor: default; }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <h2>drop a track</h2>
+  <p>wav / mp3 / ogg / flac</p>
+  <input type="file" id="file-input" accept="audio/*">
+</div>
+<div id="status"></div>
+<div id="disclaimer">
+  separation runs in-browser via WebAssembly — expect ~10s for a 5 min song<br>
+  for native speed (~1.5s), clone the repo and run locally with the C binary
+</div>
+
+<div id="mixer">
+  <div id="track-name"></div>
+
+  <div id="field">
+    <div id="field-bg">
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="ring r3"></div>
+      <div class="axis h"></div>
+      <div class="axis v"></div>
+    </div>
+    <span class="dir-label front">front</span>
+    <span class="dir-label back">back</span>
+    <span class="dir-label left">L</span>
+    <span class="dir-label right">R</span>
+    <div id="head">
+      <svg width="30" height="36" viewBox="0 0 30 36">
+        <circle cx="15" cy="20" r="11" fill="none" stroke="#2a2a2a" stroke-width="1.5"/>
+        <path d="M15 9 L12 16 L18 16 Z" fill="#2a2a2a"/>
+      </svg>
+    </div>
+    <div class="stem-line" data-stem="vocals"></div>
+    <div class="stem-line" data-stem="drums"></div>
+    <div class="stem-line" data-stem="bass"></div>
+    <div class="stem-line" data-stem="other"></div>
+    <div class="stem-dot" data-stem="vocals" data-elev="0">
+      <div class="stem-actions"><button class="mute-btn" title="mute">M</button><button class="solo-btn" title="solo">S</button></div>
+      <span class="label">vox</span><span class="elev"></span>
+    </div>
+    <div class="stem-dot" data-stem="drums" data-elev="0">
+      <div class="stem-actions"><button class="mute-btn" title="mute">M</button><button class="solo-btn" title="solo">S</button></div>
+      <span class="label">drm</span><span class="elev"></span>
+    </div>
+    <div class="stem-dot" data-stem="bass" data-elev="0">
+      <div class="stem-actions"><button class="mute-btn" title="mute">M</button><button class="solo-btn" title="solo">S</button></div>
+      <span class="label">bas</span><span class="elev"></span>
+    </div>
+    <div class="stem-dot" data-stem="other" data-elev="0">
+      <div class="stem-actions"><button class="mute-btn" title="mute">M</button><button class="solo-btn" title="solo">S</button></div>
+      <span class="label">oth</span><span class="elev"></span>
+    </div>
+  </div>
+
+  <div id="presets">
+    <button data-preset="default">default</button>
+    <button data-preset="concert">concert</button>
+    <button data-preset="surround">surround</button>
+    <button data-preset="circle">circle</button>
+    <button data-preset="front">front</button>
+  </div>
+
+  <div id="transport">
+    <button id="play-btn">&#9654;</button>
+    <input type="range" id="seek" min="0" max="1000" value="0">
+    <span id="time">0:00 / 0:00</span>
+  </div>
+  <div id="bottom-btns">
+    <button id="export-btn">export</button>
+    <button id="new-btn">new track</button>
+  </div>
+</div>
+
+<script src="stem.js"></script>
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const statusEl = document.getElementById('status');
+const mixer = document.getElementById('mixer');
+const trackName = document.getElementById('track-name');
+const playBtn = document.getElementById('play-btn');
+const seekBar = document.getElementById('seek');
+const timeDisplay = document.getElementById('time');
+const newBtn = document.getElementById('new-btn');
+const exportBtn = document.getElementById('export-btn');
+const field = document.getElementById('field');
+let currentTrackName = '';
+
+let audioCtx = null;
+let stems = {};
+let playing = false;
+let startTime = 0;
+let pauseOffset = 0;
+let duration = 0;
+let rafId = null;
+
+const STEM_NAMES = ['vocals', 'drums', 'bass', 'other'];
+
+// presets: normalized positions
+const presets = {
+  default: {
+    vocals: { x:  0,    y: -0.38, e: 0   },
+    drums:  { x:  0.42, y:  0.32, e: 0   },
+    bass:   { x: -0.42, y:  0.32, e: 0   },
+    other:  { x: -0.38, y: -0.22, e: 0   },
+  },
+  concert: {
+    vocals: { x:  0,    y: -0.55, e: 0.15 },
+    drums:  { x:  0.25, y: -0.25, e: 0.3  },
+    bass:   { x: -0.2,  y: -0.35, e:-0.2  },
+    other:  { x: -0.35, y: -0.15, e: 0.1  },
+  },
+  surround: {
+    vocals: { x:  0,    y: -0.55, e: 0.2  },
+    drums:  { x:  0.55, y:  0,    e: 0    },
+    bass:   { x: -0.55, y:  0,    e:-0.3  },
+    other:  { x:  0,    y:  0.55, e: 0.1  },
+  },
+  circle: {
+    vocals: { x:  0,    y: -0.5,  e: 0    },
+    drums:  { x:  0.5,  y:  0,    e: 0    },
+    bass:   { x:  0,    y:  0.5,  e: 0    },
+    other:  { x: -0.5,  y:  0,    e: 0    },
+  },
+  front: {
+    vocals: { x:  0,    y: -0.3,  e: 0.25 },
+    drums:  { x:  0.35, y: -0.2,  e: 0.4  },
+    bass:   { x: -0.15, y: -0.45, e:-0.25 },
+    other:  { x: -0.35, y: -0.2,  e: 0.15 },
+  },
+};
+
+function normToPercent(n) { return (n + 1) * 50; }
+
+function setStemPosition(name, nx, ny, animate) {
+  const r = Math.sqrt(nx * nx + ny * ny);
+  if (r > 0.88) { nx *= 0.88 / r; ny *= 0.88 / r; }
+
+  const dot = field.querySelector(`.stem-dot[data-stem="${name}"]`);
+  const line = field.querySelector(`.stem-line[data-stem="${name}"]`);
+
+  const px = normToPercent(nx);
+  const py = normToPercent(ny);
+
+  if (animate) {
+    dot.style.transition = 'left 0.4s ease, top 0.4s ease, box-shadow 0.15s, opacity 0.2s';
+    setTimeout(() => { dot.style.transition = 'box-shadow 0.15s, transform 0.08s, opacity 0.2s'; }, 450);
+  }
+
+  dot.style.left = px + '%';
+  dot.style.top = py + '%';
+  dot.dataset.nx = nx;
+  dot.dataset.ny = ny;
+
+  const dx = px - 50;
+  const dy = py - 50;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  line.style.width = len + '%';
+  line.style.transform = `rotate(${angle}deg)`;
+
+  if (stems[name]) {
+    const scale = 5;
+    const panner = stems[name].panner;
+    if (panner.positionX) {
+      panner.positionX.value = nx * scale;
+      panner.positionY.value = 0;
+      panner.positionZ.value = ny * scale;
+    } else {
+      panner.setPosition(nx * scale, 0, ny * scale);
+    }
+  }
+}
+
+// set initial positions
+for (const [name, pos] of Object.entries(presets.default)) {
+  setStemPosition(name, pos.x, pos.y);
+}
+
+// --- mute / solo ---
+const muteState = { vocals: false, drums: false, bass: false, other: false };
+let soloStem = null;
+
+function updateMuteVisuals() {
+  for (const name of STEM_NAMES) {
+    const dot = field.querySelector(`.stem-dot[data-stem="${name}"]`);
+    const line = field.querySelector(`.stem-line[data-stem="${name}"]`);
+    const muteBtn = dot.querySelector('.mute-btn');
+    const soloBtn = dot.querySelector('.solo-btn');
+
+    const audible = isAudible(name);
+    dot.classList.toggle('muted', !audible);
+    line.classList.toggle('muted', !audible);
+    muteBtn.classList.toggle('active', muteState[name]);
+    soloBtn.classList.toggle('active', soloStem === name);
+
+    if (stems[name]) {
+      stems[name].muteGain.gain.value = audible ? 1 : 0;
+    }
+  }
+}
+
+function isAudible(name) {
+  if (soloStem) return soloStem === name && !muteState[name];
+  return !muteState[name];
+}
+
+function toggleMute(name) {
+  muteState[name] = !muteState[name];
+  if (muteState[name] && soloStem === name) soloStem = null;
+  updateMuteVisuals();
+}
+
+function toggleSolo(name) {
+  if (soloStem === name) {
+    soloStem = null;
+  } else {
+    soloStem = name;
+    muteState[name] = false;
+  }
+  updateMuteVisuals();
+}
+
+// attach mute/solo button listeners
+document.querySelectorAll('.stem-dot').forEach(dot => {
+  const name = dot.dataset.stem;
+  dot.querySelector('.mute-btn').addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    toggleMute(name);
+  });
+  dot.querySelector('.solo-btn').addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    toggleSolo(name);
+  });
+});
+
+function setElevation(name, elev) {
+  elev = Math.max(-1, Math.min(1, elev));
+  const dot = field.querySelector(`.stem-dot[data-stem="${name}"]`);
+  dot.dataset.elev = elev;
+
+  const offset = elev * 8;
+  const blur = Math.abs(elev) * 6;
+  const shadowScale = 1 + Math.abs(elev) * 0.3;
+  dot.style.setProperty('transform', `translate(-50%, calc(-50% - ${offset}px))`);
+
+  const shadowEl = dot.querySelector('.shadow') || (() => {
+    const s = document.createElement('div');
+    s.className = 'shadow';
+    s.style.cssText = 'position:absolute;border-radius:50%;pointer-events:none;z-index:-1;transition:all 0.15s;';
+    dot.appendChild(s);
+    return s;
+  })();
+  shadowEl.style.width = (48 * shadowScale) + 'px';
+  shadowEl.style.height = (48 * shadowScale) + 'px';
+  shadowEl.style.left = (24 - 24 * shadowScale) + 'px';
+  shadowEl.style.top = (24 - 24 * shadowScale + offset * 2) + 'px';
+  shadowEl.style.background = `rgba(0,0,0,${0.15 + Math.abs(elev) * 0.2})`;
+  shadowEl.style.filter = `blur(${blur}px)`;
+
+  const elevLabel = dot.querySelector('.elev');
+  if (Math.abs(elev) > 0.05) {
+    elevLabel.textContent = (elev > 0 ? '+' : '') + (elev * 90).toFixed(0) + '\u00B0';
+  } else {
+    elevLabel.textContent = '';
+  }
+
+  if (stems[name]) {
+    const s = stems[name];
+    const y3d = elev * 5;
+    if (s.panner.positionY) {
+      s.panner.positionY.value = y3d;
+    } else {
+      s.panner.setPosition(s.panner.positionX.value, y3d, s.panner.positionZ.value);
+    }
+    s.elevEq.gain.value = elev * 8;
+    s.elevLow.gain.value = elev * -4;
+  }
+}
+
+// --- presets ---
+document.querySelectorAll('#presets button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const p = presets[btn.dataset.preset];
+    if (!p) return;
+    for (const [name, pos] of Object.entries(p)) {
+      setStemPosition(name, pos.x, pos.y, true);
+      setElevation(name, pos.e || 0);
+    }
+  });
+});
+
+// --- WASM engine (parallel via Web Workers) ---
+let workers = null;
+let modelDataCache = null;
+
+async function initWorkers() {
+  if (workers) return;
+
+  // fetch all 4 model weight files
+  statusEl.textContent = 'loading models...';
+  modelDataCache = {};
+  await Promise.all(STEM_NAMES.map(async name => {
+    const resp = await fetch(`models/${name}.bin`);
+    modelDataCache[name] = new Uint8Array(await resp.arrayBuffer());
+  }));
+
+  // spawn 4 workers, each loads one model
+  statusEl.textContent = 'starting engines...';
+  workers = {};
+  const initPromises = STEM_NAMES.map((name, i) => {
+    return new Promise(resolve => {
+      const w = new Worker('worker.js');
+      w.onmessage = e => {
+        if (e.data.type === 'ready') resolve();
+      };
+      w.postMessage({
+        type: 'init',
+        modelIdx: i,
+        modelData: modelDataCache[name],
+      });
+      workers[name] = w;
+    });
+  });
+  await Promise.all(initPromises);
+}
+
+function separateAllParallel(mono) {
+  return new Promise(resolve => {
+    const results = {};
+    let done = 0;
+
+    STEM_NAMES.forEach((name, i) => {
+      const w = workers[name];
+      // each worker gets its own copy of the audio
+      const copy = new Float32Array(mono);
+      w.onmessage = e => {
+        if (e.data.type === 'done') {
+          results[name] = e.data.result;
+          done++;
+          statusEl.textContent = `separated ${done}/4...`;
+          if (done === 4) resolve(results);
+        }
+      };
+      w.postMessage({
+        type: 'separate',
+        modelIdx: i,
+        audioData: copy,
+        nSamples: mono.length,
+      }, [copy.buffer]);
+    });
+  });
+}
+
+// --- file upload ---
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+
+async function uploadFile(file) {
+  dropZone.style.display = 'none';
+
+  try {
+    await initWorkers();
+
+    // decode audio to mono float array
+    if (!audioCtx) audioCtx = new AudioContext();
+    statusEl.textContent = 'decoding audio...';
+    const fileData = await file.arrayBuffer();
+    const audioBuf = await audioCtx.decodeAudioData(fileData);
+
+    // mix to mono
+    const n = audioBuf.length;
+    const sr = audioBuf.sampleRate;
+    const mono = new Float32Array(n);
+    const numCh = audioBuf.numberOfChannels;
+    for (let c = 0; c < numCh; c++) {
+      const ch = audioBuf.getChannelData(c);
+      for (let i = 0; i < n; i++) mono[i] += ch[i] / numCh;
+    }
+
+    // separate all 4 stems in parallel via Web Workers
+    statusEl.textContent = 'separating...';
+    const t0 = performance.now();
+    const stemResults = await separateAllParallel(mono);
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    console.log(`separated in ${elapsed}s`);
+
+    // wrap in AudioBuffers
+    const stemBuffers = {};
+    for (const name of STEM_NAMES) {
+      const ab = audioCtx.createBuffer(1, n, sr);
+      ab.getChannelData(0).set(stemResults[name]);
+      stemBuffers[name] = ab;
+    }
+
+    duration = audioBuf.duration;
+
+    // set up listener
+    const L = audioCtx.listener;
+    if (L.positionX) {
+      L.positionX.value = 0; L.positionY.value = 0; L.positionZ.value = 0;
+      L.forwardX.value = 0; L.forwardY.value = 0; L.forwardZ.value = -1;
+      L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+    } else {
+      L.setPosition(0, 0, 0);
+      L.setOrientation(0, 0, -1, 0, 1, 0);
+    }
+
+    stems = {};
+    for (const name of STEM_NAMES) {
+      const panner = audioCtx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 4;
+      panner.maxDistance = 20;
+      panner.rolloffFactor = 1;
+      panner.coneInnerAngle = 360;
+      panner.coneOuterAngle = 360;
+
+      const elevEq = audioCtx.createBiquadFilter();
+      elevEq.type = 'highshelf';
+      elevEq.frequency.value = 3000;
+      elevEq.gain.value = 0;
+
+      const elevLow = audioCtx.createBiquadFilter();
+      elevLow.type = 'lowshelf';
+      elevLow.frequency.value = 250;
+      elevLow.gain.value = 0;
+
+      const muteGain = audioCtx.createGain();
+      muteGain.gain.value = isAudible(name) ? 1 : 0;
+
+      panner.connect(elevEq);
+      elevEq.connect(elevLow);
+      elevLow.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+
+      stems[name] = { buffer: stemBuffers[name], panner, elevEq, elevLow, muteGain, source: null };
+    }
+
+    // re-apply positions
+    for (const name of STEM_NAMES) {
+      const dot = field.querySelector(`.stem-dot[data-stem="${name}"]`);
+      const nx = parseFloat(dot.dataset.nx);
+      const ny = parseFloat(dot.dataset.ny);
+      setStemPosition(name, nx, ny);
+    }
+    updateMuteVisuals();
+
+    statusEl.textContent = '';
+    mixer.style.display = 'flex';
+    currentTrackName = file.name.replace(/\.[^.]+$/, '');
+    trackName.textContent = currentTrackName;
+
+    pauseOffset = 0;
+    playing = false;
+    playBtn.innerHTML = '&#9654;';
+    seekBar.value = 0;
+    updateTime();
+  } catch (err) {
+    statusEl.textContent = 'error: ' + err.message;
+    dropZone.style.display = 'flex';
+    console.error(err);
+  }
+}
+
+// --- dragging ---
+let dragTarget = null;
+
+field.addEventListener('pointerdown', e => {
+  const dot = e.target.closest('.stem-dot');
+  if (!dot || e.target.closest('.stem-actions')) return;
+  dragTarget = dot;
+  dot.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+
+field.addEventListener('pointermove', e => {
+  if (!dragTarget) return;
+  const rect = field.getBoundingClientRect();
+  const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+  setStemPosition(dragTarget.dataset.stem, nx, ny);
+});
+
+field.addEventListener('pointerup', () => { dragTarget = null; });
+field.addEventListener('pointercancel', () => { dragTarget = null; });
+
+// --- elevation scroll ---
+field.addEventListener('wheel', e => {
+  const dot = e.target.closest('.stem-dot');
+  if (!dot) return;
+  e.preventDefault();
+  let elev = parseFloat(dot.dataset.elev || 0);
+  elev -= e.deltaY * 0.003;
+  setElevation(dot.dataset.stem, elev);
+}, { passive: false });
+
+// --- spacebar ---
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !e.target.closest('input, button')) {
+    e.preventDefault();
+    if (!audioCtx || !Object.keys(stems).length) return;
+    if (playing) pause(); else play();
+  }
+});
+
+// --- playback ---
+playBtn.addEventListener('click', () => {
+  if (!audioCtx || !Object.keys(stems).length) return;
+  if (playing) pause(); else play();
+});
+
+function play() {
+  if (playing) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  for (const [name, s] of Object.entries(stems)) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = s.buffer;
+    src.connect(s.panner);
+    src.start(0, pauseOffset);
+    s.source = src;
+    src.onended = () => {
+      if (playing && pauseOffset + (audioCtx.currentTime - startTime) >= duration - 0.05) {
+        pause();
+        pauseOffset = 0;
+        seekBar.value = 0;
+        updateTime();
+      }
+    };
+  }
+
+  startTime = audioCtx.currentTime;
+  playing = true;
+  playBtn.innerHTML = '&#10074;&#10074;';
+  tick();
+}
+
+function pause() {
+  if (!playing) return;
+  pauseOffset += audioCtx.currentTime - startTime;
+  for (const s of Object.values(stems)) {
+    if (s.source) { s.source.onended = null; s.source.stop(); s.source = null; }
+  }
+  playing = false;
+  playBtn.innerHTML = '&#9654;';
+  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
+function tick() {
+  if (!playing) return;
+  const current = pauseOffset + (audioCtx.currentTime - startTime);
+  seekBar.value = (current / duration) * 1000;
+  updateTime();
+  rafId = requestAnimationFrame(tick);
+}
+
+function updateTime() {
+  const cur = playing ? pauseOffset + (audioCtx.currentTime - startTime) : pauseOffset;
+  const fmt = s => Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0');
+  timeDisplay.textContent = fmt(Math.min(cur, duration)) + ' / ' + fmt(duration);
+}
+
+seekBar.addEventListener('input', () => {
+  const was = playing;
+  if (was) pause();
+  pauseOffset = (seekBar.value / 1000) * duration;
+  updateTime();
+  if (was) play();
+});
+
+newBtn.addEventListener('click', () => {
+  pause();
+  pauseOffset = 0;
+  stems = {};
+  soloStem = null;
+  for (const n of STEM_NAMES) muteState[n] = false;
+  mixer.style.display = 'none';
+  dropZone.style.display = 'flex';
+  statusEl.textContent = '';
+  fileInput.value = '';
+  for (const [name, pos] of Object.entries(presets.default)) {
+    setStemPosition(name, pos.x, pos.y);
+  }
+  updateMuteVisuals();
+});
+
+// --- export ---
+exportBtn.addEventListener('click', async () => {
+  if (!Object.keys(stems).length) return;
+  exportBtn.disabled = true;
+  exportBtn.textContent = 'rendering...';
+
+  try {
+    const sr = stems.vocals.buffer.sampleRate;
+    const len = stems.vocals.buffer.length;
+    const offline = new OfflineAudioContext(2, len, sr);
+
+    // set up listener
+    const L = offline.listener;
+    if (L.positionX) {
+      L.positionX.value = 0; L.positionY.value = 0; L.positionZ.value = 0;
+      L.forwardX.value = 0; L.forwardY.value = 0; L.forwardZ.value = -1;
+      L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+    } else {
+      L.setPosition(0, 0, 0);
+      L.setOrientation(0, 0, -1, 0, 1, 0);
+    }
+
+    // recreate the full audio graph in offline context
+    for (const [name, s] of Object.entries(stems)) {
+      const dot = field.querySelector(`.stem-dot[data-stem="${name}"]`);
+      const nx = parseFloat(dot.dataset.nx);
+      const ny = parseFloat(dot.dataset.ny);
+      const elev = parseFloat(dot.dataset.elev || 0);
+
+      const panner = offline.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 4;
+      panner.maxDistance = 20;
+      panner.rolloffFactor = 1;
+      panner.coneInnerAngle = 360;
+      panner.coneOuterAngle = 360;
+      if (panner.positionX) {
+        panner.positionX.value = nx * 5;
+        panner.positionY.value = elev * 5;
+        panner.positionZ.value = ny * 5;
+      } else {
+        panner.setPosition(nx * 5, elev * 5, ny * 5);
+      }
+
+      const eq = offline.createBiquadFilter();
+      eq.type = 'highshelf';
+      eq.frequency.value = 3000;
+      eq.gain.value = elev * 8;
+
+      const low = offline.createBiquadFilter();
+      low.type = 'lowshelf';
+      low.frequency.value = 250;
+      low.gain.value = elev * -4;
+
+      const gain = offline.createGain();
+      gain.gain.value = isAudible(name) ? 1 : 0;
+
+      const src = offline.createBufferSource();
+      src.buffer = s.buffer;
+      src.connect(panner);
+      panner.connect(eq);
+      eq.connect(low);
+      low.connect(gain);
+      gain.connect(offline.destination);
+      src.start(0);
+    }
+
+    const rendered = await offline.startRendering();
+
+    // encode as WAV
+    const numCh = rendered.numberOfChannels;
+    const samples = rendered.length;
+    const bps = 16;
+    const dataSize = samples * numCh * (bps / 8);
+    const buf = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buf);
+
+    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numCh, true);
+    view.setUint32(24, rendered.sampleRate, true);
+    view.setUint32(28, rendered.sampleRate * numCh * (bps / 8), true);
+    view.setUint16(32, numCh * (bps / 8), true);
+    view.setUint16(34, bps, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const channels = [];
+    for (let c = 0; c < numCh; c++) channels.push(rendered.getChannelData(c));
+
+    let off = 44;
+    for (let i = 0; i < samples; i++) {
+      for (let c = 0; c < numCh; c++) {
+        let s = channels[c][i];
+        s = Math.max(-1, Math.min(1, s));
+        view.setInt16(off, s * 32767, true);
+        off += 2;
+      }
+    }
+
+    const blob = new Blob([buf], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reproduced_${currentTrackName}.wav`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('export failed:', err);
+  }
+
+  exportBtn.disabled = false;
+  exportBtn.textContent = 'export';
+});
+</script>
+
+</body>
+</html>
