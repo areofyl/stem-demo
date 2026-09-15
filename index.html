@@ -669,60 +669,89 @@ document.querySelectorAll('#presets button').forEach(btn => {
   });
 });
 
-// --- WASM engine (main thread, no workers) ---
-let wasmModule = null;
+// --- separation backends ---
 
-async function initWasm() {
-  if (wasmModule) return;
+// Backend 1: server.py (native C, fast)
+async function tryServer(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const resp = await fetch('/separate', { method: 'POST', body: form });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  if (data.error) return null;
 
-  statusEl.textContent = 'loading engine...';
-  wasmModule = await StemModule();
-
-  statusEl.textContent = 'loading models...';
-  for (let i = 0; i < STEM_NAMES.length; i++) {
-    const resp = await fetch(`models/${STEM_NAMES[i]}.bin`);
-    const data = new Uint8Array(await resp.arrayBuffer());
-    const ptr = wasmModule._malloc(data.length);
-    wasmModule.HEAPU8.set(data, ptr);
-    const ret = wasmModule._load_model_from_buffer(i, ptr, data.length);
-    wasmModule._free(ptr);
-    if (ret !== 0) throw new Error(`failed to load ${STEM_NAMES[i]} model`);
-  }
+  if (!audioCtx) audioCtx = new AudioContext();
+  const stemBuffers = {};
+  await Promise.all(STEM_NAMES.map(async name => {
+    const r = await fetch(data.stems[name]);
+    const ab = await r.arrayBuffer();
+    stemBuffers[name] = await audioCtx.decodeAudioData(ab);
+  }));
+  return stemBuffers;
 }
 
-async function separateAll(mono) {
-  const n = mono.length;
+// Backend 2: WASM in main thread (slower, no server needed)
+let wasmReady = false;
+async function tryWasm(file) {
+  if (!audioCtx) audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-  // log input energy to verify data is valid
-  let inEnergy = 0;
-  for (let i = 0; i < Math.min(n, 10000); i++) inEnergy += mono[i] * mono[i];
-  console.log('input energy (first 10k samples):', inEnergy);
+  // load WASM engine + models once
+  if (!wasmReady) {
+    statusEl.textContent = 'loading engine...';
+    if (typeof StemModule === 'undefined') throw new Error('stem.js not loaded');
+    window._stemMod = await StemModule();
 
-  const inPtr = wasmModule._malloc(n * 4);
-  wasmModule.HEAPF32.set(mono, inPtr >> 2);
-
-  const results = {};
-  for (let i = 0; i < STEM_NAMES.length; i++) {
-    statusEl.textContent = `separating ${STEM_NAMES[i]}... (${i + 1}/4)`;
-    await new Promise(r => setTimeout(r, 20));
-
-    // re-write input each time (separate may corrupt the input buffer)
-    wasmModule.HEAPF32.set(mono, inPtr >> 2);
-    wasmModule._separate(i, inPtr, n);
-
-    const outPtr = wasmModule._get_output_ptr();
-    const result = new Float32Array(n);
-    result.set(wasmModule.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + n));
-    results[STEM_NAMES[i]] = result;
-
-    // log output energy
-    let outEnergy = 0;
-    for (let j = 0; j < Math.min(n, 10000); j++) outEnergy += result[j] * result[j];
-    console.log(`${STEM_NAMES[i]} output energy:`, outEnergy);
+    statusEl.textContent = 'loading models...';
+    for (let i = 0; i < STEM_NAMES.length; i++) {
+      const resp = await fetch('models/' + STEM_NAMES[i] + '.bin');
+      if (!resp.ok) throw new Error('model not found: ' + STEM_NAMES[i]);
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      const ptr = window._stemMod._malloc(buf.length);
+      window._stemMod.HEAPU8.set(buf, ptr);
+      window._stemMod._load_model_from_buffer(i, ptr, buf.length);
+      window._stemMod._free(ptr);
+    }
+    wasmReady = true;
   }
 
-  wasmModule._free(inPtr);
-  return results;
+  const mod = window._stemMod;
+
+  // decode audio
+  statusEl.textContent = 'decoding audio...';
+  const audioBuf = await audioCtx.decodeAudioData(await file.arrayBuffer());
+  const n = audioBuf.length;
+  const sr = audioBuf.sampleRate;
+
+  // mix to mono
+  const mono = new Float32Array(n);
+  for (let c = 0; c < audioBuf.numberOfChannels; c++) {
+    const ch = audioBuf.getChannelData(c);
+    for (let i = 0; i < n; i++) mono[i] += ch[i] / audioBuf.numberOfChannels;
+  }
+
+  // run 4 models
+  const stemBuffers = {};
+  for (let i = 0; i < STEM_NAMES.length; i++) {
+    statusEl.textContent = 'separating ' + STEM_NAMES[i] + '... (' + (i+1) + '/4)';
+    await new Promise(r => setTimeout(r, 10));
+
+    // write mono into wasm heap
+    const inPtr = mod._malloc(n * 4);
+    mod.HEAPF32.set(mono, inPtr >> 2);
+
+    mod._separate(i, inPtr, n);
+
+    const outPtr = mod._get_output_ptr();
+    const ab = audioCtx.createBuffer(1, n, sr);
+    const out = ab.getChannelData(0);
+    for (let j = 0; j < n; j++) out[j] = mod.HEAPF32[(outPtr >> 2) + j];
+
+    mod._free(inPtr);
+    stemBuffers[STEM_NAMES[i]] = ab;
+  }
+
+  return stemBuffers;
 }
 
 // --- file upload ---
@@ -744,101 +773,24 @@ demoBtn.addEventListener('click', async () => {
   try {
     const resp = await fetch('demo.mp3');
     const blob = await resp.blob();
-    const file = new File([blob], 'All I Know - Avalon.mp3', { type: 'audio/mpeg' });
-    await uploadFile(file);
+    await uploadFile(new File([blob], 'All I Know - Avalon.mp3', { type: 'audio/mpeg' }));
   } catch (err) {
-    statusEl.textContent = 'demo track not found';
+    statusEl.textContent = 'could not load demo';
     demoBtn.disabled = false;
     demoBtn.textContent = 'or try with "All I Know" by Avalon';
   }
 });
-
-// check if native server is running (quick probe, no file upload)
-let serverAvailable = null;
-async function checkServer() {
-  if (serverAvailable !== null) return serverAvailable;
-  try {
-    const resp = await fetch('/separate', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(1000) });
-    // server exists if we get any response (even an error JSON)
-    serverAvailable = true;
-  } catch {
-    serverAvailable = false;
-  }
-  return serverAvailable;
-}
-
-// server separation (fast, native C)
-async function serverSeparate(file) {
-  const form = new FormData();
-  form.append('file', file);
-  const resp = await fetch('/separate', { method: 'POST', body: form });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  if (data.error) return null;
-
-  statusEl.textContent = 'loading stems...';
-  if (!audioCtx) audioCtx = new AudioContext();
-
-  const stemBuffers = {};
-  await Promise.all(STEM_NAMES.map(async name => {
-    const r = await fetch(data.stems[name]);
-    const ab = await r.arrayBuffer();
-    stemBuffers[name] = await audioCtx.decodeAudioData(ab);
-  }));
-
-  if (data.info) console.log(data.info);
-  return stemBuffers;
-}
-
-// WASM separation (runs in main thread)
-async function wasmSeparate(file) {
-  await initWasm();
-
-  if (!audioCtx) audioCtx = new AudioContext();
-  if (audioCtx.state === 'suspended') await audioCtx.resume();
-  statusEl.textContent = 'decoding audio...';
-  const fileData = await file.arrayBuffer();
-  const audioBuf = await audioCtx.decodeAudioData(fileData);
-
-  const n = audioBuf.length;
-  const sr = audioBuf.sampleRate;
-  const mono = new Float32Array(n);
-  const numCh = audioBuf.numberOfChannels;
-  for (let c = 0; c < numCh; c++) {
-    const ch = audioBuf.getChannelData(c);
-    for (let i = 0; i < n; i++) mono[i] += ch[i] / numCh;
-  }
-
-  statusEl.textContent = 'separating...';
-  const t0 = performance.now();
-  const stemResults = await separateAll(mono);
-  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
-  console.log(`separated in ${elapsed}s (wasm)`);
-
-  const stemBuffers = {};
-  for (const name of STEM_NAMES) {
-    const ab = audioCtx.createBuffer(1, n, sr);
-    ab.getChannelData(0).set(stemResults[name]);
-    stemBuffers[name] = ab;
-  }
-  return stemBuffers;
-}
 
 async function uploadFile(file) {
   dropZone.style.display = 'none';
   demoBtn.style.display = 'none';
 
   try {
-    // try native server first, fall back to WASM
-    statusEl.textContent = 'checking server...';
+    // try server first, fall back to WASM
+    statusEl.textContent = 'separating...';
     let stemBuffers = null;
-    if (await checkServer()) {
-      statusEl.textContent = 'separating (native)...';
-      stemBuffers = await serverSeparate(file);
-    }
-    if (!stemBuffers) {
-      stemBuffers = await wasmSeparate(file);
-    }
+    try { stemBuffers = await tryServer(file); } catch {}
+    if (!stemBuffers) stemBuffers = await tryWasm(file);
 
     if (!audioCtx) audioCtx = new AudioContext();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -907,15 +859,12 @@ async function uploadFile(file) {
     seekBar.value = 0;
     updateTime();
   } catch (err) {
-    const msg = err ? (err.message || String(err)) : 'unknown error';
-    statusEl.textContent = 'error: ' + msg;
-    statusEl.style.color = '#ff6666';
-    alert('stem-demo error: ' + msg);
+    statusEl.textContent = 'error: ' + (err.message || err);
+    console.error(err);
     dropZone.style.display = 'flex';
     demoBtn.style.display = '';
     demoBtn.disabled = false;
     demoBtn.textContent = 'or try with "All I Know" by Avalon';
-    console.error('uploadFile failed:', err);
   }
 }
 
