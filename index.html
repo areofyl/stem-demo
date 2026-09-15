@@ -669,65 +669,49 @@ document.querySelectorAll('#presets button').forEach(btn => {
   });
 });
 
-// --- WASM engine (parallel via Web Workers) ---
-let workers = null;
-let modelDataCache = null;
+// --- WASM engine (single worker, all 4 models sequential) ---
+let stemWorker = null;
 
-async function initWorkers() {
-  if (workers) return;
+async function initWorker() {
+  if (stemWorker) return;
 
   // fetch all 4 model weight files
   statusEl.textContent = 'loading models...';
-  modelDataCache = {};
-  await Promise.all(STEM_NAMES.map(async name => {
-    const resp = await fetch(`models/${name}.bin`);
-    modelDataCache[name] = new Uint8Array(await resp.arrayBuffer());
-  }));
+  const modelDatas = await Promise.all(
+    STEM_NAMES.map(async name => {
+      const resp = await fetch(`models/${name}.bin`);
+      return new Uint8Array(await resp.arrayBuffer());
+    })
+  );
 
-  // spawn 4 workers, each loads one model
-  statusEl.textContent = 'starting engines...';
-  workers = {};
-  const initPromises = STEM_NAMES.map((name, i) => {
-    return new Promise(resolve => {
-      const w = new Worker('worker.js');
-      w.onmessage = e => {
-        if (e.data.type === 'ready') resolve();
-      };
-      w.postMessage({
-        type: 'init',
-        modelIdx: i,
-        modelData: modelDataCache[name],
-      });
-      workers[name] = w;
-    });
+  // single worker loads all 4 models
+  statusEl.textContent = 'starting engine...';
+  stemWorker = new Worker('worker.js');
+  await new Promise(resolve => {
+    stemWorker.onmessage = e => {
+      if (e.data.type === 'ready') resolve();
+    };
+    stemWorker.postMessage({ type: 'init', models: modelDatas }, modelDatas.map(d => d.buffer));
   });
-  await Promise.all(initPromises);
 }
 
-function separateAllParallel(mono) {
+function separateAll(mono) {
   return new Promise(resolve => {
-    const results = {};
-    let done = 0;
-
-    STEM_NAMES.forEach((name, i) => {
-      const w = workers[name];
-      // each worker gets its own copy of the audio
-      const copy = new Float32Array(mono);
-      w.onmessage = e => {
-        if (e.data.type === 'done') {
-          results[name] = e.data.result;
-          done++;
-          statusEl.textContent = `separated ${done}/4...`;
-          if (done === 4) resolve(results);
-        }
-      };
-      w.postMessage({
-        type: 'separate',
-        modelIdx: i,
-        audioData: copy,
-        nSamples: mono.length,
-      }, [copy.buffer]);
-    });
+    stemWorker.onmessage = e => {
+      if (e.data.type === 'progress') {
+        statusEl.textContent = `separating ${e.data.done}/${e.data.total}...`;
+      }
+      if (e.data.type === 'done') {
+        resolve(e.data.results);
+      }
+    };
+    const copy = new Float32Array(mono);
+    stemWorker.postMessage({
+      type: 'separate',
+      audioData: copy,
+      nSamples: mono.length,
+      stemNames: STEM_NAMES,
+    }, [copy.buffer]);
   });
 }
 
@@ -796,9 +780,9 @@ async function serverSeparate(file) {
   return stemBuffers;
 }
 
-// WASM separation (slower, runs in browser)
+// WASM separation (runs in single worker)
 async function wasmSeparate(file) {
-  await initWorkers();
+  await initWorker();
 
   if (!audioCtx) audioCtx = new AudioContext();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -817,7 +801,7 @@ async function wasmSeparate(file) {
 
   statusEl.textContent = 'separating...';
   const t0 = performance.now();
-  const stemResults = await separateAllParallel(mono);
+  const stemResults = await separateAll(mono);
   const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
   console.log(`separated in ${elapsed}s (wasm)`);
 
