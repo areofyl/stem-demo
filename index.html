@@ -759,31 +759,41 @@ demoBtn.addEventListener('click', async () => {
   }
 });
 
-// try server separation (fast, native C), returns null if server isn't running
-async function tryServerSeparate(file) {
+// check if native server is running (quick probe, no file upload)
+let serverAvailable = null;
+async function checkServer() {
+  if (serverAvailable !== null) return serverAvailable;
   try {
-    const form = new FormData();
-    form.append('file', file);
-    const resp = await fetch('/separate', { method: 'POST', body: form });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    if (data.error) return null;
-
-    statusEl.textContent = 'loading stems...';
-    if (!audioCtx) audioCtx = new AudioContext();
-
-    const stemBuffers = {};
-    await Promise.all(STEM_NAMES.map(async name => {
-      const r = await fetch(data.stems[name]);
-      const ab = await r.arrayBuffer();
-      stemBuffers[name] = await audioCtx.decodeAudioData(ab);
-    }));
-
-    if (data.info) console.log(data.info);
-    return stemBuffers;
+    const resp = await fetch('/separate', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(1000) });
+    // server exists if we get any response (even an error JSON)
+    serverAvailable = true;
   } catch {
-    return null;
+    serverAvailable = false;
   }
+  return serverAvailable;
+}
+
+// server separation (fast, native C)
+async function serverSeparate(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const resp = await fetch('/separate', { method: 'POST', body: form });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  if (data.error) return null;
+
+  statusEl.textContent = 'loading stems...';
+  if (!audioCtx) audioCtx = new AudioContext();
+
+  const stemBuffers = {};
+  await Promise.all(STEM_NAMES.map(async name => {
+    const r = await fetch(data.stems[name]);
+    const ab = await r.arrayBuffer();
+    stemBuffers[name] = await audioCtx.decodeAudioData(ab);
+  }));
+
+  if (data.info) console.log(data.info);
+  return stemBuffers;
 }
 
 // WASM separation (slower, runs in browser)
@@ -826,8 +836,12 @@ async function uploadFile(file) {
 
   try {
     // try native server first, fall back to WASM
-    statusEl.textContent = 'separating...';
-    let stemBuffers = await tryServerSeparate(file);
+    statusEl.textContent = 'checking server...';
+    let stemBuffers = null;
+    if (await checkServer()) {
+      statusEl.textContent = 'separating (native)...';
+      stemBuffers = await serverSeparate(file);
+    }
     if (!stemBuffers) {
       stemBuffers = await wasmSeparate(file);
     }
