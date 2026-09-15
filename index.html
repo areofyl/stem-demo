@@ -368,8 +368,8 @@ body {
 </div>
 <div id="status"></div>
 <div id="disclaimer">
-  separation runs in-browser via WebAssembly — expect ~10s for a 5 min song<br>
-  for native speed (~1.5s), clone the repo and run locally with the C binary
+  runs natively via server.py if available, otherwise separates in-browser via WebAssembly<br>
+  for best speed, clone the repo and run <code>make && python server.py</code>
 </div>
 
 <div id="mixer">
@@ -726,44 +726,79 @@ dropZone.addEventListener('drop', e => {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
 
+// try server separation (fast, native C), returns null if server isn't running
+async function tryServerSeparate(file) {
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch('/separate', { method: 'POST', body: form });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data.error) return null;
+
+    statusEl.textContent = 'loading stems...';
+    if (!audioCtx) audioCtx = new AudioContext();
+
+    const stemBuffers = {};
+    await Promise.all(STEM_NAMES.map(async name => {
+      const r = await fetch(data.stems[name]);
+      const ab = await r.arrayBuffer();
+      stemBuffers[name] = await audioCtx.decodeAudioData(ab);
+    }));
+
+    if (data.info) console.log(data.info);
+    return stemBuffers;
+  } catch {
+    return null;
+  }
+}
+
+// WASM separation (slower, runs in browser)
+async function wasmSeparate(file) {
+  await initWorkers();
+
+  if (!audioCtx) audioCtx = new AudioContext();
+  statusEl.textContent = 'decoding audio...';
+  const fileData = await file.arrayBuffer();
+  const audioBuf = await audioCtx.decodeAudioData(fileData);
+
+  const n = audioBuf.length;
+  const sr = audioBuf.sampleRate;
+  const mono = new Float32Array(n);
+  const numCh = audioBuf.numberOfChannels;
+  for (let c = 0; c < numCh; c++) {
+    const ch = audioBuf.getChannelData(c);
+    for (let i = 0; i < n; i++) mono[i] += ch[i] / numCh;
+  }
+
+  statusEl.textContent = 'separating...';
+  const t0 = performance.now();
+  const stemResults = await separateAllParallel(mono);
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  console.log(`separated in ${elapsed}s (wasm)`);
+
+  const stemBuffers = {};
+  for (const name of STEM_NAMES) {
+    const ab = audioCtx.createBuffer(1, n, sr);
+    ab.getChannelData(0).set(stemResults[name]);
+    stemBuffers[name] = ab;
+  }
+  return stemBuffers;
+}
+
 async function uploadFile(file) {
   dropZone.style.display = 'none';
 
   try {
-    await initWorkers();
-
-    // decode audio to mono float array
-    if (!audioCtx) audioCtx = new AudioContext();
-    statusEl.textContent = 'decoding audio...';
-    const fileData = await file.arrayBuffer();
-    const audioBuf = await audioCtx.decodeAudioData(fileData);
-
-    // mix to mono
-    const n = audioBuf.length;
-    const sr = audioBuf.sampleRate;
-    const mono = new Float32Array(n);
-    const numCh = audioBuf.numberOfChannels;
-    for (let c = 0; c < numCh; c++) {
-      const ch = audioBuf.getChannelData(c);
-      for (let i = 0; i < n; i++) mono[i] += ch[i] / numCh;
-    }
-
-    // separate all 4 stems in parallel via Web Workers
+    // try native server first, fall back to WASM
     statusEl.textContent = 'separating...';
-    const t0 = performance.now();
-    const stemResults = await separateAllParallel(mono);
-    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
-    console.log(`separated in ${elapsed}s`);
-
-    // wrap in AudioBuffers
-    const stemBuffers = {};
-    for (const name of STEM_NAMES) {
-      const ab = audioCtx.createBuffer(1, n, sr);
-      ab.getChannelData(0).set(stemResults[name]);
-      stemBuffers[name] = ab;
+    let stemBuffers = await tryServerSeparate(file);
+    if (!stemBuffers) {
+      stemBuffers = await wasmSeparate(file);
     }
 
-    duration = audioBuf.duration;
+    if (!audioCtx) audioCtx = new AudioContext();
+    duration = stemBuffers.vocals.duration;
 
     // set up listener
     const L = audioCtx.listener;
