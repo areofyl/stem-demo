@@ -687,16 +687,19 @@ async function initWorker() {
   // single worker loads all 4 models
   statusEl.textContent = 'starting engine...';
   stemWorker = new Worker('worker.js');
-  await new Promise(resolve => {
+  await new Promise((resolve, reject) => {
     stemWorker.onmessage = e => {
       if (e.data.type === 'ready') resolve();
+      if (e.data.type === 'error') reject(new Error(e.data.message));
     };
-    stemWorker.postMessage({ type: 'init', models: modelDatas }, modelDatas.map(d => d.buffer));
+    stemWorker.onerror = e => reject(new Error(e.message));
+    // send model data as plain arrays (no transfer, keeps copies safe)
+    stemWorker.postMessage({ type: 'init', models: modelDatas.map(d => Array.from(d)) });
   });
 }
 
 function separateAll(mono) {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     stemWorker.onmessage = e => {
       if (e.data.type === 'progress') {
         statusEl.textContent = `separating ${e.data.done}/${e.data.total}...`;
@@ -704,7 +707,11 @@ function separateAll(mono) {
       if (e.data.type === 'done') {
         resolve(e.data.results);
       }
+      if (e.data.type === 'error') {
+        reject(new Error(e.data.message));
+      }
     };
+    stemWorker.onerror = e => reject(new Error(e.message));
     const copy = new Float32Array(mono);
     stemWorker.postMessage({
       type: 'separate',
