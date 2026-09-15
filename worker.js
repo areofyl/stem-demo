@@ -8,12 +8,17 @@ self.onmessage = async function(e) {
 
   if (type === 'init') {
     try {
-      // init WASM — tell it where to find stem.wasm
+      // resolve wasm path relative to the page, not the worker
+      const base = e.data.baseUrl || self.location.href;
+      const wasmUrl = new URL('stem.wasm', base).href;
+
       module = await StemModule({
         locateFile: function(path) {
+          if (path.endsWith('.wasm')) return wasmUrl;
           return path;
         }
       });
+
       const models = e.data.models;
       for (let i = 0; i < models.length; i++) {
         const data = new Uint8Array(models[i]);

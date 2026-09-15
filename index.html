@@ -693,8 +693,8 @@ async function initWorker() {
       if (e.data.type === 'error') reject(new Error(e.data.message));
     };
     stemWorker.onerror = e => reject(new Error(e.message));
-    // send model data as plain arrays (no transfer, keeps copies safe)
-    stemWorker.postMessage({ type: 'init', models: modelDatas.map(d => Array.from(d)) });
+    // send model data (structured clone copies them, no transfer)
+    stemWorker.postMessage({ type: 'init', models: modelDatas, baseUrl: self.location.href });
   });
 }
 
