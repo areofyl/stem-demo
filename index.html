@@ -791,6 +791,7 @@ async function wasmSeparate(file) {
   await initWorkers();
 
   if (!audioCtx) audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
   statusEl.textContent = 'decoding audio...';
   const fileData = await file.arrayBuffer();
   const audioBuf = await audioCtx.decodeAudioData(fileData);
@@ -832,6 +833,7 @@ async function uploadFile(file) {
     }
 
     if (!audioCtx) audioCtx = new AudioContext();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
     duration = stemBuffers.vocals.duration;
 
     // set up listener
@@ -897,12 +899,13 @@ async function uploadFile(file) {
     seekBar.value = 0;
     updateTime();
   } catch (err) {
-    statusEl.textContent = 'error: ' + err.message;
+    statusEl.textContent = 'error: ' + (err.message || err);
+    statusEl.title = err.stack || '';
     dropZone.style.display = 'flex';
     demoBtn.style.display = '';
     demoBtn.disabled = false;
     demoBtn.textContent = 'or try with "All I Know" by Avalon';
-    console.error(err);
+    console.error('uploadFile failed:', err);
   }
 }
 
