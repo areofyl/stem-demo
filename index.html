@@ -692,19 +692,33 @@ async function initWasm() {
 
 async function separateAll(mono) {
   const n = mono.length;
+
+  // log input energy to verify data is valid
+  let inEnergy = 0;
+  for (let i = 0; i < Math.min(n, 10000); i++) inEnergy += mono[i] * mono[i];
+  console.log('input energy (first 10k samples):', inEnergy);
+
   const inPtr = wasmModule._malloc(n * 4);
   wasmModule.HEAPF32.set(mono, inPtr >> 2);
 
   const results = {};
   for (let i = 0; i < STEM_NAMES.length; i++) {
     statusEl.textContent = `separating ${STEM_NAMES[i]}... (${i + 1}/4)`;
-    // yield to UI so status updates render
     await new Promise(r => setTimeout(r, 20));
+
+    // re-write input each time (separate may corrupt the input buffer)
+    wasmModule.HEAPF32.set(mono, inPtr >> 2);
     wasmModule._separate(i, inPtr, n);
+
     const outPtr = wasmModule._get_output_ptr();
     const result = new Float32Array(n);
     result.set(wasmModule.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + n));
     results[STEM_NAMES[i]] = result;
+
+    // log output energy
+    let outEnergy = 0;
+    for (let j = 0; j < Math.min(n, 10000); j++) outEnergy += result[j] * result[j];
+    console.log(`${STEM_NAMES[i]} output energy:`, outEnergy);
   }
 
   wasmModule._free(inPtr);
