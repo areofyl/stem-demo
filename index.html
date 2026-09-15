@@ -702,9 +702,9 @@ async function separateAll(mono) {
     await new Promise(r => setTimeout(r, 20));
     wasmModule._separate(i, inPtr, n);
     const outPtr = wasmModule._get_output_ptr();
-    results[STEM_NAMES[i]] = new Float32Array(
-      wasmModule.HEAPF32.buffer.slice(outPtr, outPtr + n * 4)
-    );
+    const result = new Float32Array(n);
+    result.set(wasmModule.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + n));
+    results[STEM_NAMES[i]] = result;
   }
 
   wasmModule._free(inPtr);
