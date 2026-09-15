@@ -669,57 +669,46 @@ document.querySelectorAll('#presets button').forEach(btn => {
   });
 });
 
-// --- WASM engine (single worker, all 4 models sequential) ---
-let stemWorker = null;
+// --- WASM engine (main thread, no workers) ---
+let wasmModule = null;
 
-async function initWorker() {
-  if (stemWorker) return;
+async function initWasm() {
+  if (wasmModule) return;
 
-  // fetch all 4 model weight files
+  statusEl.textContent = 'loading engine...';
+  wasmModule = await StemModule();
+
   statusEl.textContent = 'loading models...';
-  const modelDatas = await Promise.all(
-    STEM_NAMES.map(async name => {
-      const resp = await fetch(`models/${name}.bin`);
-      return new Uint8Array(await resp.arrayBuffer());
-    })
-  );
-
-  // single worker loads all 4 models
-  statusEl.textContent = 'starting engine...';
-  stemWorker = new Worker('worker.js');
-  await new Promise((resolve, reject) => {
-    stemWorker.onmessage = e => {
-      if (e.data.type === 'ready') resolve();
-      if (e.data.type === 'error') reject(new Error(e.data.message));
-    };
-    stemWorker.onerror = e => reject(new Error(e.message));
-    // send model data (structured clone copies them, no transfer)
-    stemWorker.postMessage({ type: 'init', models: modelDatas, baseUrl: self.location.href });
-  });
+  for (let i = 0; i < STEM_NAMES.length; i++) {
+    const resp = await fetch(`models/${STEM_NAMES[i]}.bin`);
+    const data = new Uint8Array(await resp.arrayBuffer());
+    const ptr = wasmModule._malloc(data.length);
+    wasmModule.HEAPU8.set(data, ptr);
+    const ret = wasmModule._load_model_from_buffer(i, ptr, data.length);
+    wasmModule._free(ptr);
+    if (ret !== 0) throw new Error(`failed to load ${STEM_NAMES[i]} model`);
+  }
 }
 
-function separateAll(mono) {
-  return new Promise((resolve, reject) => {
-    stemWorker.onmessage = e => {
-      if (e.data.type === 'progress') {
-        statusEl.textContent = `separating ${e.data.done}/${e.data.total}...`;
-      }
-      if (e.data.type === 'done') {
-        resolve(e.data.results);
-      }
-      if (e.data.type === 'error') {
-        reject(new Error(e.data.message));
-      }
-    };
-    stemWorker.onerror = e => reject(new Error(e.message));
-    const copy = new Float32Array(mono);
-    stemWorker.postMessage({
-      type: 'separate',
-      audioData: copy,
-      nSamples: mono.length,
-      stemNames: STEM_NAMES,
-    }, [copy.buffer]);
-  });
+async function separateAll(mono) {
+  const n = mono.length;
+  const inPtr = wasmModule._malloc(n * 4);
+  wasmModule.HEAPF32.set(mono, inPtr >> 2);
+
+  const results = {};
+  for (let i = 0; i < STEM_NAMES.length; i++) {
+    statusEl.textContent = `separating ${STEM_NAMES[i]}... (${i + 1}/4)`;
+    // yield to UI so status updates render
+    await new Promise(r => setTimeout(r, 20));
+    wasmModule._separate(i, inPtr, n);
+    const outPtr = wasmModule._get_output_ptr();
+    results[STEM_NAMES[i]] = new Float32Array(
+      wasmModule.HEAPF32.buffer.slice(outPtr, outPtr + n * 4)
+    );
+  }
+
+  wasmModule._free(inPtr);
+  return results;
 }
 
 // --- file upload ---
@@ -787,9 +776,9 @@ async function serverSeparate(file) {
   return stemBuffers;
 }
 
-// WASM separation (runs in single worker)
+// WASM separation (runs in main thread)
 async function wasmSeparate(file) {
-  await initWorker();
+  await initWasm();
 
   if (!audioCtx) audioCtx = new AudioContext();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
