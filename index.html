@@ -381,7 +381,7 @@ body {
   <p>wav / mp3 / ogg / flac</p>
   <input type="file" id="file-input" accept="audio/*">
 </div>
-<button id="demo-btn">or try with a demo track</button>
+<button id="demo-btn">or try with "All I Know" by Avalon</button>
 <div id="status"></div>
 <div id="disclaimer">
   runs natively via server.py if available, otherwise separates in-browser via WebAssembly<br>
@@ -755,7 +755,7 @@ demoBtn.addEventListener('click', async () => {
   } catch (err) {
     statusEl.textContent = 'demo track not found';
     demoBtn.disabled = false;
-    demoBtn.textContent = 'or try with a demo track';
+    demoBtn.textContent = 'or try with "All I Know" by Avalon';
   }
 });
 
@@ -901,7 +901,7 @@ async function uploadFile(file) {
     dropZone.style.display = 'flex';
     demoBtn.style.display = '';
     demoBtn.disabled = false;
-    demoBtn.textContent = 'or try with a demo track';
+    demoBtn.textContent = 'or try with "All I Know" by Avalon';
     console.error(err);
   }
 }
@@ -1022,7 +1022,7 @@ newBtn.addEventListener('click', () => {
   dropZone.style.display = 'flex';
   demoBtn.style.display = '';
   demoBtn.disabled = false;
-  demoBtn.textContent = 'or try with a demo track';
+  demoBtn.textContent = 'or try with "All I Know" by Avalon';
   statusEl.textContent = '';
   fileInput.value = '';
   for (const [name, pos] of Object.entries(presets.default)) {
