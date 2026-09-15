@@ -121,11 +121,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/" or path == "/index.html":
             self.serve_file(ROOT / "index.html", "text/html")
         elif path.startswith("/stems/"):
-            # serve stem wav files
-            rel = path[1:]  # strip leading /
+            rel = path[1:]
             full = ROOT / rel
             if full.exists() and full.is_file():
                 self.serve_file(full, "audio/wav")
+            else:
+                self.send_error(404)
+        elif path.startswith("/models/") or path in ("/demo.mp3", "/stem.js", "/stem.wasm", "/worker.js"):
+            full = ROOT / path.lstrip("/")
+            if full.exists() and full.is_file():
+                ct = {
+                    ".js": "application/javascript", ".wasm": "application/wasm",
+                    ".mp3": "audio/mpeg", ".bin": "application/octet-stream",
+                }.get(full.suffix, "application/octet-stream")
+                self.serve_file(full, ct)
             else:
                 self.send_error(404)
         else:
