@@ -357,6 +357,21 @@ body {
 }
 #export-btn:hover { border-color: var(--border-hover); color: var(--btn-hover); }
 #export-btn:disabled { opacity: 0.3; cursor: default; }
+
+#demo-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  margin-top: 10px;
+}
+#demo-btn:hover { border-color: var(--border-hover); color: var(--btn-hover); }
+#demo-btn:disabled { opacity: 0.3; cursor: default; }
 </style>
 </head>
 <body>
@@ -366,6 +381,7 @@ body {
   <p>wav / mp3 / ogg / flac</p>
   <input type="file" id="file-input" accept="audio/*">
 </div>
+<button id="demo-btn">or try with a demo track</button>
 <div id="status"></div>
 <div id="disclaimer">
   runs natively via server.py if available, otherwise separates in-browser via WebAssembly<br>
@@ -726,6 +742,23 @@ dropZone.addEventListener('drop', e => {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
 
+// --- demo track ---
+const demoBtn = document.getElementById('demo-btn');
+demoBtn.addEventListener('click', async () => {
+  demoBtn.disabled = true;
+  demoBtn.textContent = 'loading demo...';
+  try {
+    const resp = await fetch('demo.mp3');
+    const blob = await resp.blob();
+    const file = new File([blob], 'All I Know - Avalon.mp3', { type: 'audio/mpeg' });
+    uploadFile(file);
+  } catch (err) {
+    statusEl.textContent = 'demo track not found';
+    demoBtn.disabled = false;
+    demoBtn.textContent = 'or try with a demo track';
+  }
+});
+
 // try server separation (fast, native C), returns null if server isn't running
 async function tryServerSeparate(file) {
   try {
@@ -788,6 +821,7 @@ async function wasmSeparate(file) {
 
 async function uploadFile(file) {
   dropZone.style.display = 'none';
+  demoBtn.style.display = 'none';
 
   try {
     // try native server first, fall back to WASM
@@ -865,6 +899,9 @@ async function uploadFile(file) {
   } catch (err) {
     statusEl.textContent = 'error: ' + err.message;
     dropZone.style.display = 'flex';
+    demoBtn.style.display = '';
+    demoBtn.disabled = false;
+    demoBtn.textContent = 'or try with a demo track';
     console.error(err);
   }
 }
@@ -983,6 +1020,9 @@ newBtn.addEventListener('click', () => {
   for (const n of STEM_NAMES) muteState[n] = false;
   mixer.style.display = 'none';
   dropZone.style.display = 'flex';
+  demoBtn.style.display = '';
+  demoBtn.disabled = false;
+  demoBtn.textContent = 'or try with a demo track';
   statusEl.textContent = '';
   fileInput.value = '';
   for (const [name, pos] of Object.entries(presets.default)) {
